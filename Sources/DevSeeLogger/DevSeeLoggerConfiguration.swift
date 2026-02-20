@@ -36,4 +36,13 @@ public struct DevSeeLoggerConfiguration: Sendable {
         }
         return fallback
     }
+
+    func replacingServerURL(_ serverURL: URL) -> DevSeeLoggerConfiguration {
+        DevSeeLoggerConfiguration(
+            appId: appId,
+            serverURL: serverURL,
+            apiPath: apiPath,
+            maxBodyBytes: maxBodyBytes
+        )
+    }
 }
