@@ -2,17 +2,21 @@ import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
+import _Concurrency
 
-public final class DevSeeLogger {
+public final class DevSeeLogger: @unchecked Sendable {
     private static let deepLinkSchemePrefix = "dev-see-"
     private static let deepLinkAction = "connect"
     private static let serverIPParam = "server_ip"
     private static let serverPortParam = "server_port"
 
     private let stateLock = NSLock()
+    private let requestTrackingLock = NSLock()
     private var configuration: DevSeeLoggerConfiguration
     private let redactor: HeaderRedactor
     private var transport: any LogTransporting
+    private var startedAtsByRequestKey: [String: [Date]] = [:]
+    private var startedAtsByToken: [DevSeeRequestToken: Date] = [:]
 
     public init(configuration: DevSeeLoggerConfiguration) {
         self.configuration = configuration
@@ -39,29 +43,113 @@ public final class DevSeeLogger {
         startedAt: Date? = nil,
         endedAt: Date = Date()
     ) async {
-        let (configuration, transport) = readState()
-        let event = ApiLogEvent.from(
+        let eventWithTransport = buildEventWithTransport(
             request: request,
             response: response,
             responseBody: responseBody,
             requestBody: requestBody,
             error: error,
             startedAt: startedAt,
-            endedAt: endedAt,
-            configuration: configuration,
-            redactor: redactor
+            endedAt: endedAt
         )
-
-        do {
-            try await transport.send(event: event)
-        } catch {
-            #if DEBUG
-            print("DevSeeLogger send failed: \(error)")
-            #endif
-        }
+        await send(eventWithTransport.event, with: eventWithTransport.transport)
     }
 
+    public func logDetached(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBody: Data? = nil,
+        requestBody: Data? = nil,
+        error: Error? = nil,
+        startedAt: Date? = nil,
+        endedAt: Date = Date()
+    ) {
+        let eventWithTransport = buildEventWithTransport(
+            request: request,
+            response: response,
+            responseBody: responseBody,
+            requestBody: requestBody,
+            error: error,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+        sendDetached(eventWithTransport.event, with: eventWithTransport.transport)
+    }
+
+    @discardableResult
+    public func beginRequest(
+        _ request: URLRequest,
+        at startedAt: Date = Date()
+    ) -> DevSeeRequestToken {
+        let token = DevSeeRequestToken(rawValue: UUID())
+        requestTrackingLock.lock()
+        startedAtsByRequestKey[requestKey(for: request), default: []].append(startedAt)
+        startedAtsByToken[token] = startedAt
+        requestTrackingLock.unlock()
+        return token
+    }
+
+    public func markRequestStarted(
+        _ request: URLRequest,
+        at startedAt: Date = Date()
+    ) {
+        requestTrackingLock.lock()
+        startedAtsByRequestKey[requestKey(for: request), default: []].append(startedAt)
+        requestTrackingLock.unlock()
+    }
+
+    public func logCompleted(
+        token: DevSeeRequestToken? = nil,
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBody: Data? = nil,
+        requestBody: Data? = nil,
+        error: Error? = nil,
+        endedAt: Date = Date()
+    ) async {
+        let startedAt = popStartedAt(token: token, for: request)
+        await log(
+            request: request,
+            response: response,
+            responseBody: responseBody,
+            requestBody: requestBody,
+            error: error,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+    }
+
+    public func logCompletedDetached(
+        token: DevSeeRequestToken? = nil,
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBody: Data? = nil,
+        requestBody: Data? = nil,
+        error: Error? = nil,
+        endedAt: Date = Date()
+    ) {
+        let startedAt = popStartedAt(token: token, for: request)
+        logDetached(
+            request: request,
+            response: response,
+            responseBody: responseBody,
+            requestBody: requestBody,
+            error: error,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+    }
+
+    public func handleURL(_ url: URL) -> DevSeeConnectionResult {
+        handleConnectionURL(url)
+    }
+
+    @available(*, deprecated, renamed: "handleURL")
     public func handleUrl(_ url: URL) -> DevSeeConnectionResult {
+        handleConnectionURL(url)
+    }
+
+    private func handleConnectionURL(_ url: URL) -> DevSeeConnectionResult {
         guard let scheme = url.scheme?.lowercased(),
               scheme.hasPrefix(Self.deepLinkSchemePrefix) else {
             return .ignored
@@ -121,6 +209,85 @@ public final class DevSeeLogger {
         if transport is LogTransport {
             transport = LogTransport(configuration: configuration)
         }
+    }
+
+    private func buildEventWithTransport(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBody: Data?,
+        requestBody: Data?,
+        error: Error?,
+        startedAt: Date?,
+        endedAt: Date
+    ) -> (event: ApiLogEvent, transport: any LogTransporting) {
+        let (configuration, transport) = readState()
+        let event = ApiLogEvent.from(
+            request: request,
+            response: response,
+            responseBody: responseBody,
+            requestBody: requestBody,
+            error: error,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            configuration: configuration,
+            redactor: redactor
+        )
+        return (event, transport)
+    }
+
+    private func send(_ event: ApiLogEvent, with transport: any LogTransporting) async {
+        do {
+            try await transport.send(event: event)
+        } catch {
+            #if DEBUG
+            print("DevSeeLogger send failed: \(error)")
+            #endif
+        }
+    }
+
+    private func sendDetached(_ event: ApiLogEvent, with transport: any LogTransporting) {
+        _Concurrency.Task {
+            await send(event, with: transport)
+        }
+    }
+
+    private func popStartedAt(token: DevSeeRequestToken?, for request: URLRequest) -> Date? {
+        requestTrackingLock.lock()
+        defer { requestTrackingLock.unlock() }
+
+        if let token, let startedAt = startedAtsByToken.removeValue(forKey: token) {
+            let requestKey = requestKey(for: request)
+            if var dates = startedAtsByRequestKey[requestKey], !dates.isEmpty {
+                dates.removeFirst()
+                if dates.isEmpty {
+                    startedAtsByRequestKey.removeValue(forKey: requestKey)
+                } else {
+                    startedAtsByRequestKey[requestKey] = dates
+                }
+            }
+            return startedAt
+        }
+
+        let requestKey = requestKey(for: request)
+        guard var dates = startedAtsByRequestKey[requestKey], !dates.isEmpty else {
+            return nil
+        }
+
+        let startedAt = dates.removeFirst()
+        if dates.isEmpty {
+            startedAtsByRequestKey.removeValue(forKey: requestKey)
+        } else {
+            startedAtsByRequestKey[requestKey] = dates
+        }
+        return startedAt
+    }
+
+    private func requestKey(for request: URLRequest) -> String {
+        var hasher = Hasher()
+        hasher.combine(request.httpMethod ?? "UNKNOWN")
+        hasher.combine(request.url?.absoluteString ?? "")
+        hasher.combine(request.httpBody ?? Data())
+        return String(hasher.finalize())
     }
 
     private func resolvedAction(from url: URL) -> String {

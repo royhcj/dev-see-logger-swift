@@ -33,7 +33,8 @@ extension ApiLogEvent {
         let requestHeaders = redactor.redact(request.allHTTPHeaderFields)
         let responseHeaders = redactor.redact(normalize(responseHeaders: response?.allHeaderFields))
 
-        let encodedRequestBody = encodeBody(requestBody, maxBodyBytes: configuration.maxBodyBytes)
+        let resolvedRequestBody = requestBody ?? request.httpBody
+        let encodedRequestBody = encodeBody(resolvedRequestBody, maxBodyBytes: configuration.maxBodyBytes)
         let encodedResponseBody = encodeBody(responseBody, maxBodyBytes: configuration.maxBodyBytes)
 
         let duration = durationMilliseconds(startedAt: startedAt, endedAt: endedAt)

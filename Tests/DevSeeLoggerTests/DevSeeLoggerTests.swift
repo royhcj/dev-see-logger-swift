@@ -26,7 +26,7 @@ final class DevSeeLoggerTests: XCTestCase {
         let logger = DevSeeLogger(configuration: configuration)
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=192.168.1.23&server_port=9090"))
 
-        let result = logger.handleUrl(url)
+        let result = logger.handleURL(url)
 
         switch result {
         case .connected(let endpoint):
@@ -40,7 +40,7 @@ final class DevSeeLoggerTests: XCTestCase {
         let logger = DevSeeLogger(configuration: sampleConfiguration())
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_port=9090"))
 
-        let result = logger.handleUrl(url)
+        let result = logger.handleURL(url)
 
         XCTAssertEqual(result, .failed(reason: "Missing required query parameter: server_ip."))
     }
@@ -49,7 +49,7 @@ final class DevSeeLoggerTests: XCTestCase {
         let logger = DevSeeLogger(configuration: sampleConfiguration())
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=qa-server.local"))
 
-        let result = logger.handleUrl(url)
+        let result = logger.handleURL(url)
 
         XCTAssertEqual(result, .failed(reason: "Missing required query parameter: server_port."))
     }
@@ -58,7 +58,7 @@ final class DevSeeLoggerTests: XCTestCase {
         let logger = DevSeeLogger(configuration: sampleConfiguration())
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=qa_server.local&server_port=9090"))
 
-        let result = logger.handleUrl(url)
+        let result = logger.handleURL(url)
 
         XCTAssertEqual(result, .failed(reason: "Invalid host format in server_ip."))
     }
@@ -73,7 +73,7 @@ final class DevSeeLoggerTests: XCTestCase {
 
         for invalidURL in invalidURLs {
             let url = try XCTUnwrap(URL(string: invalidURL))
-            let result = logger.handleUrl(url)
+            let result = logger.handleURL(url)
             XCTAssertEqual(result, .failed(reason: "Invalid server_port. Use an integer between 1 and 65535."))
         }
     }
@@ -83,8 +83,8 @@ final class DevSeeLoggerTests: XCTestCase {
         let wrongScheme = try XCTUnwrap(URL(string: "https://connect?server_ip=qa-server.local&server_port=9090"))
         let wrongAction = try XCTUnwrap(URL(string: "dev-see-com.example.app://disconnect?server_ip=qa-server.local&server_port=9090"))
 
-        XCTAssertEqual(logger.handleUrl(wrongScheme), .ignored)
-        XCTAssertEqual(logger.handleUrl(wrongAction), .ignored)
+        XCTAssertEqual(logger.handleURL(wrongScheme), .ignored)
+        XCTAssertEqual(logger.handleURL(wrongAction), .ignored)
     }
 
     func testHandleUrlAppliesEndpointOverrideAfterSuccessfulParse() throws {
@@ -95,7 +95,7 @@ final class DevSeeLoggerTests: XCTestCase {
         let logger = DevSeeLogger(configuration: configuration)
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=192.168.1.34&server_port=8081"))
 
-        let result = logger.handleUrl(url)
+        let result = logger.handleURL(url)
 
         XCTAssertEqual(result, .connected(endpoint: DevSeeEndpoint(scheme: "http", host: "192.168.1.34", port: 8081)))
         XCTAssertEqual(logger.currentServerURL.absoluteString, "http://192.168.1.34:8081")
@@ -154,6 +154,46 @@ final class DevSeeLoggerTests: XCTestCase {
         XCTAssertEqual(event?.requestHeaders?["Authorization"], "[REDACTED]")
         XCTAssertEqual(event?.responseHeaders?["Set-Cookie"], "[REDACTED]")
         XCTAssertEqual(event?.requestHeaders?["Content-Type"], "application/json")
+    }
+
+    func testLogFallsBackToRequestHTTPBodyWhenRequestBodyOmitted() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        var request = URLRequest(url: URL(string: "https://api.example.com/fallback")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data("{\"from\":\"request\"}".utf8)
+
+        await logger.log(
+            request: request,
+            response: nil,
+            responseBody: nil
+        )
+
+        let event = await transportSpy.latestEvent()
+        XCTAssertEqual(event?.requestBody, "{\"from\":\"request\"}")
+    }
+
+    func testLogUsesExplicitRequestBodyOverRequestHTTPBody() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        var request = URLRequest(url: URL(string: "https://api.example.com/override")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data("{\"from\":\"request\"}".utf8)
+        let explicitBody = Data("{\"from\":\"argument\"}".utf8)
+
+        await logger.log(
+            request: request,
+            response: nil,
+            responseBody: nil,
+            requestBody: explicitBody
+        )
+
+        let event = await transportSpy.latestEvent()
+        XCTAssertEqual(event?.requestBody, "{\"from\":\"argument\"}")
     }
 
     func testLogIncludesErrorWhenResponseUnavailable() async throws {
@@ -230,6 +270,47 @@ final class DevSeeLoggerTests: XCTestCase {
         XCTAssertNotNil(event)
         XCTAssertEqual(event?.requestBody, "{\"ok\":true}")
         XCTAssertEqual(event?.responseBody, "{\"ok\":true}")
+    }
+
+    func testLogCompletedUsesTrackedStartedAt() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        let request = URLRequest(url: URL(string: "https://api.example.com/timed")!)
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let endedAt = startedAt.addingTimeInterval(0.25)
+        logger.markRequestStarted(request, at: startedAt)
+
+        await logger.logCompleted(
+            request: request,
+            response: nil,
+            endedAt: endedAt
+        )
+
+        let event = await transportSpy.latestEvent()
+        XCTAssertEqual(event?.duration, 250)
+    }
+
+    func testLogCompletedUsesTokenStartedAt() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        let request = URLRequest(url: URL(string: "https://api.example.com/token")!)
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let endedAt = startedAt.addingTimeInterval(0.123)
+        let token = logger.beginRequest(request, at: startedAt)
+
+        await logger.logCompleted(
+            token: token,
+            request: request,
+            response: nil,
+            endedAt: endedAt
+        )
+
+        let event = await transportSpy.latestEvent()
+        XCTAssertEqual(event?.duration, 123)
     }
 
     func testTransportBuildsPostRequestWithDefaultPathAndJSONBody() throws {

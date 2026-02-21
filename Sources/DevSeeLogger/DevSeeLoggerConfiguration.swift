@@ -1,6 +1,6 @@
 import Foundation
 
-public struct DevSeeLoggerConfiguration: Sendable {
+public struct DevSeeLoggerConfiguration: Sendable, Equatable {
     public let appId: String
     public let serverURL: URL
     public let apiPath: String

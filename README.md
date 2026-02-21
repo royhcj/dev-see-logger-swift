@@ -1,6 +1,6 @@
 # DevSeeLogger
 
-Minimal Swift Package for manually sending request/response logs to a dev-see log server.
+Swift package for sending request/response logs to a dev-see log server.
 
 ## Installation
 
@@ -20,18 +20,28 @@ pod 'DevSeeLogger', :path => '../packages/swift/dev-see-logger'
 pod 'DevSeeLogger', :git => 'https://github.com/your-username/dev-see.git', :tag => '0.1.0'
 ```
 
-## Phase 1 Usage
+## Quick Start
+
+Configure a shared logger once:
 
 ```swift
 import DevSeeLogger
-import Foundation
 
-let logger = DevSeeLogger(
-    configuration: DevSeeLoggerConfiguration(
-        appId: "com.example.myapp",
-        serverURL: URL(string: "http://192.168.1.20:9090")!
+DevSeeLoggerCenter.configure(
+    DevSeeLoggerConfiguration(
+        appId: Bundle.main.bundleIdentifier ?? "com.example.app",
+        serverURL: URL(string: "http://127.0.0.1:9090")!
     )
 )
+```
+
+## Manual Logging
+
+```swift
+import Foundation
+import DevSeeLogger
+
+let logger = DevSeeLoggerCenter.shared
 
 var request = URLRequest(url: URL(string: "https://api.example.com/users/42")!)
 request.httpMethod = "GET"
@@ -55,3 +65,32 @@ do {
     )
 }
 ```
+
+## Lifecycle Helpers
+
+If your networking stack provides request start and finish hooks, use lifecycle helpers:
+
+```swift
+let token = logger.beginRequest(request)
+// ...perform request...
+await logger.logCompleted(
+    token: token,
+    request: request,
+    response: response as? HTTPURLResponse,
+    responseBody: data,
+    error: error
+)
+```
+
+You can also call `markRequestStarted(_:)` and later `logCompleted(...)` without managing a token.
+
+## Request Body Behavior
+
+`requestBody` is optional. If omitted, logger falls back to `request.httpBody`.
+
+## Moya Adapter
+
+Moya integration is shipped as a separate package so the core package has no Moya dependency:
+
+1. Add `DevSeeLoggerMoya` package from `packages/swift/dev-see-logger-moya-swift`.
+2. Register plugin: `DevSeeLoggerMoyaPlugin()`.
