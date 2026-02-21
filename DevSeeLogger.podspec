@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = "DevSeeLogger"
-  s.version          = "0.2.0"
+  s.version          = "0.3.0"
   s.summary          = "Minimal Swift logger that sends API logs to a dev-see server."
   s.description      = <<-DESC
 DevSeeLogger is a lightweight Swift logging library for manually sending

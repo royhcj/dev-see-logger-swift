@@ -17,7 +17,7 @@ Add one of the following entries to your app target in `Podfile`:
 pod 'DevSeeLogger', :path => '../packages/swift/dev-see-logger'
 
 # Or from Git (replace with your real repo URL + tag)
-pod 'DevSeeLogger', :git => 'https://github.com/royhcj/dev-see-logger-swift.git', :tag => '0.2.0'
+pod 'DevSeeLogger', :git => 'https://github.com/royhcj/dev-see-logger-swift.git', :tag => '0.3.0'
 ```
 
 ## Quick Start
