@@ -15,23 +15,54 @@ public final class DevSeeLogger: @unchecked Sendable {
     private var configuration: DevSeeLoggerConfiguration
     private let redactor: HeaderRedactor
     private var transport: any LogTransporting
+    private let endpointStore: any DevSeeEndpointStoring
     private var startedAtsByRequestKey: [String: [Date]] = [:]
     private var startedAtsByToken: [DevSeeRequestToken: Date] = [:]
 
     public init(configuration: DevSeeLoggerConfiguration) {
-        self.configuration = configuration
+        let endpointStore = DevSeeUserDefaultsEndpointStore(appId: configuration.appId)
+        let resolvedConfiguration = Self.resolvedInitialConfiguration(
+            from: configuration,
+            endpointStore: endpointStore
+        )
+        self.configuration = resolvedConfiguration
         self.redactor = HeaderRedactor()
-        self.transport = LogTransport(configuration: configuration)
+        self.transport = LogTransport(configuration: resolvedConfiguration)
+        self.endpointStore = endpointStore
+    }
+
+    init(
+        configuration: DevSeeLoggerConfiguration,
+        endpointStore: any DevSeeEndpointStoring
+    ) {
+        let resolvedConfiguration = Self.resolvedInitialConfiguration(
+            from: configuration,
+            endpointStore: endpointStore
+        )
+        self.configuration = resolvedConfiguration
+        self.redactor = HeaderRedactor()
+        self.transport = LogTransport(configuration: resolvedConfiguration)
+        self.endpointStore = endpointStore
     }
 
     init(
         configuration: DevSeeLoggerConfiguration,
         transport: any LogTransporting,
-        redactor: HeaderRedactor = HeaderRedactor()
+        redactor: HeaderRedactor = HeaderRedactor(),
+        endpointStore: any DevSeeEndpointStoring = DevSeeNoopEndpointStore()
     ) {
-        self.configuration = configuration
-        self.transport = transport
+        let resolvedConfiguration = Self.resolvedInitialConfiguration(
+            from: configuration,
+            endpointStore: endpointStore
+        )
+        self.configuration = resolvedConfiguration
+        if transport is LogTransport, resolvedConfiguration != configuration {
+            self.transport = LogTransport(configuration: resolvedConfiguration)
+        } else {
+            self.transport = transport
+        }
         self.redactor = redactor
+        self.endpointStore = endpointStore
     }
 
     public func log(
@@ -168,7 +199,7 @@ public final class DevSeeLogger: @unchecked Sendable {
             return .failed(reason: "Missing required query parameter: \(Self.serverIPParam).")
         }
 
-        guard isSupportedHost(hostValue) else {
+        guard Self.isSupportedHost(hostValue) else {
             return .failed(reason: "Invalid host format in \(Self.serverIPParam).")
         }
 
@@ -187,6 +218,7 @@ public final class DevSeeLogger: @unchecked Sendable {
         }
 
         writeState(configuration: configuration.replacingServerURL(serverURL))
+        endpointStore.saveEndpoint(endpoint)
         return .connected(endpoint: endpoint)
     }
 
@@ -209,6 +241,24 @@ public final class DevSeeLogger: @unchecked Sendable {
         if transport is LogTransport {
             transport = LogTransport(configuration: configuration)
         }
+    }
+
+    private static func resolvedInitialConfiguration(
+        from configuration: DevSeeLoggerConfiguration,
+        endpointStore: any DevSeeEndpointStoring
+    ) -> DevSeeLoggerConfiguration {
+        guard let rememberedEndpoint = endpointStore.loadEndpoint() else {
+            return configuration
+        }
+
+        guard isSupportedHost(rememberedEndpoint.host),
+              (1...65_535).contains(rememberedEndpoint.port),
+              let rememberedServerURL = rememberedEndpoint.serverURL else {
+            endpointStore.clearEndpoint()
+            return configuration
+        }
+
+        return configuration.replacingServerURL(rememberedServerURL)
     }
 
     private func buildEventWithTransport(
@@ -305,11 +355,11 @@ public final class DevSeeLogger: @unchecked Sendable {
         components.queryItems?.first(where: { $0.name == name })?.value
     }
 
-    private func isSupportedHost(_ host: String) -> Bool {
+    private static func isSupportedHost(_ host: String) -> Bool {
         isIPv4Address(host) || isHostname(host)
     }
 
-    private func isIPv4Address(_ host: String) -> Bool {
+    private static func isIPv4Address(_ host: String) -> Bool {
         let segments = host.split(separator: ".", omittingEmptySubsequences: false)
         guard segments.count == 4 else { return false }
 
@@ -321,7 +371,7 @@ public final class DevSeeLogger: @unchecked Sendable {
         return true
     }
 
-    private func isHostname(_ host: String) -> Bool {
+    private static func isHostname(_ host: String) -> Bool {
         guard !host.isEmpty, host.count <= 253 else { return false }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
         guard !labels.contains(where: \.isEmpty) else { return false }

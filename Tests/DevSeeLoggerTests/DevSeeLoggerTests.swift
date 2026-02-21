@@ -23,7 +23,11 @@ final class DevSeeLoggerTests: XCTestCase {
             appId: "com.example.test",
             serverURL: URL(string: "http://localhost:9090")!
         )
-        let logger = DevSeeLogger(configuration: configuration)
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=192.168.1.23&server_port=9090"))
 
         let result = logger.handleURL(url)
@@ -37,7 +41,12 @@ final class DevSeeLoggerTests: XCTestCase {
     }
 
     func testHandleUrlMissingServerIPReturnsFailed() throws {
-        let logger = DevSeeLogger(configuration: sampleConfiguration())
+        let configuration = sampleConfiguration()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_port=9090"))
 
         let result = logger.handleURL(url)
@@ -46,7 +55,12 @@ final class DevSeeLoggerTests: XCTestCase {
     }
 
     func testHandleUrlMissingServerPortReturnsFailed() throws {
-        let logger = DevSeeLogger(configuration: sampleConfiguration())
+        let configuration = sampleConfiguration()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=qa-server.local"))
 
         let result = logger.handleURL(url)
@@ -55,7 +69,12 @@ final class DevSeeLoggerTests: XCTestCase {
     }
 
     func testHandleUrlInvalidHostReturnsFailed() throws {
-        let logger = DevSeeLogger(configuration: sampleConfiguration())
+        let configuration = sampleConfiguration()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=qa_server.local&server_port=9090"))
 
         let result = logger.handleURL(url)
@@ -64,7 +83,12 @@ final class DevSeeLoggerTests: XCTestCase {
     }
 
     func testHandleUrlInvalidPortReturnsFailed() throws {
-        let logger = DevSeeLogger(configuration: sampleConfiguration())
+        let configuration = sampleConfiguration()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let invalidURLs = [
             "dev-see-com.example.app://connect?server_ip=qa-server.local&server_port=0",
             "dev-see-com.example.app://connect?server_ip=qa-server.local&server_port=65536",
@@ -79,7 +103,12 @@ final class DevSeeLoggerTests: XCTestCase {
     }
 
     func testHandleUrlWrongSchemeOrActionReturnsIgnored() throws {
-        let logger = DevSeeLogger(configuration: sampleConfiguration())
+        let configuration = sampleConfiguration()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let wrongScheme = try XCTUnwrap(URL(string: "https://connect?server_ip=qa-server.local&server_port=9090"))
         let wrongAction = try XCTUnwrap(URL(string: "dev-see-com.example.app://disconnect?server_ip=qa-server.local&server_port=9090"))
 
@@ -92,13 +121,83 @@ final class DevSeeLoggerTests: XCTestCase {
             appId: "com.example.test",
             serverURL: URL(string: "http://localhost:9090")!
         )
-        let logger = DevSeeLogger(configuration: configuration)
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: InMemoryEndpointStore()
+        )
         let url = try XCTUnwrap(URL(string: "dev-see-com.example.app://connect?server_ip=192.168.1.34&server_port=8081"))
 
         let result = logger.handleURL(url)
 
         XCTAssertEqual(result, .connected(endpoint: DevSeeEndpoint(scheme: "http", host: "192.168.1.34", port: 8081)))
         XCTAssertEqual(logger.currentServerURL.absoluteString, "http://192.168.1.34:8081")
+    }
+
+    func testHandleURLPersistsEndpointAndRestoresOnNextInitialization() throws {
+        let configuration = sampleConfiguration()
+        let endpointStore = InMemoryEndpointStore()
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: endpointStore
+        )
+        let connectURL = try XCTUnwrap(
+            URL(string: "dev-see-com.example.app://connect?server_ip=172.20.0.10&server_port=9111")
+        )
+
+        let result = logger.handleURL(connectURL)
+
+        XCTAssertEqual(result, .connected(endpoint: DevSeeEndpoint(scheme: "http", host: "172.20.0.10", port: 9111)))
+        XCTAssertEqual(
+            endpointStore.storedEndpoint,
+            DevSeeEndpoint(scheme: "http", host: "172.20.0.10", port: 9111)
+        )
+
+        let restartedLogger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: endpointStore
+        )
+
+        XCTAssertEqual(restartedLogger.currentServerURL.absoluteString, "http://172.20.0.10:9111")
+    }
+
+    func testIgnoredOrFailedHandleURLDoesNotOverwriteRememberedEndpoint() throws {
+        let rememberedEndpoint = DevSeeEndpoint(scheme: "http", host: "10.1.1.2", port: 8080)
+        let configuration = sampleConfiguration()
+        let endpointStore = InMemoryEndpointStore(endpoint: rememberedEndpoint)
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: endpointStore
+        )
+        let ignoredURL = try XCTUnwrap(URL(string: "https://example.com"))
+        let failedURL = try XCTUnwrap(
+            URL(string: "dev-see-com.example.app://connect?server_ip=10.1.1.99&server_port=99999")
+        )
+
+        XCTAssertEqual(logger.handleURL(ignoredURL), .ignored)
+        XCTAssertEqual(
+            logger.handleURL(failedURL),
+            .failed(reason: "Invalid server_port. Use an integer between 1 and 65535.")
+        )
+        XCTAssertEqual(endpointStore.storedEndpoint, rememberedEndpoint)
+    }
+
+    func testInvalidRememberedEndpointFallsBackToConfiguredServerURL() {
+        let configuration = sampleConfiguration()
+        let endpointStore = InMemoryEndpointStore(
+            endpoint: DevSeeEndpoint(scheme: "http", host: "bad_host", port: 9090)
+        )
+        let logger = DevSeeLogger(
+            configuration: configuration,
+            transport: LogTransport(configuration: configuration),
+            endpointStore: endpointStore
+        )
+
+        XCTAssertEqual(logger.currentServerURL.absoluteString, configuration.serverURL.absoluteString)
+        XCTAssertNil(endpointStore.storedEndpoint)
     }
 
     func testLogMapsRequestAndResponseFields() async throws {

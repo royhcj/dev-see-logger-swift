@@ -6,6 +6,9 @@ public enum DevSeeLoggerCenter {
     private static let stateLock = NSLock()
     nonisolated(unsafe) private static var sharedLogger: DevSeeLogger?
     nonisolated(unsafe) private static var sharedConfiguration: DevSeeLoggerConfiguration?
+    nonisolated(unsafe) private static var endpointStoreFactory: (String) -> any DevSeeEndpointStoring = {
+        DevSeeUserDefaultsEndpointStore(appId: $0)
+    }
 
     public static func configure(_ configuration: DevSeeLoggerConfiguration) {
         stateLock.lock()
@@ -16,7 +19,8 @@ public enum DevSeeLoggerCenter {
         }
 
         sharedConfiguration = configuration
-        sharedLogger = DevSeeLogger(configuration: configuration)
+        let endpointStore = endpointStoreFactory(configuration.appId)
+        sharedLogger = DevSeeLogger(configuration: configuration, endpointStore: endpointStore)
     }
 
     public static var shared: DevSeeLogger {
@@ -28,7 +32,8 @@ public enum DevSeeLoggerCenter {
         }
 
         let configuration = defaultConfiguration()
-        let logger = DevSeeLogger(configuration: configuration)
+        let endpointStore = endpointStoreFactory(configuration.appId)
+        let logger = DevSeeLogger(configuration: configuration, endpointStore: endpointStore)
         sharedConfiguration = configuration
         sharedLogger = logger
         return logger
@@ -49,6 +54,15 @@ public enum DevSeeLoggerCenter {
         stateLock.lock()
         sharedConfiguration = nil
         sharedLogger = nil
+        endpointStoreFactory = { DevSeeUserDefaultsEndpointStore(appId: $0) }
+        stateLock.unlock()
+    }
+
+    static func setEndpointStoreFactoryForTesting(
+        _ factory: @escaping (String) -> any DevSeeEndpointStoring
+    ) {
+        stateLock.lock()
+        endpointStoreFactory = factory
         stateLock.unlock()
     }
 

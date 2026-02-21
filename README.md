@@ -35,6 +35,18 @@ DevSeeLoggerCenter.configure(
 )
 ```
 
+## Connection Deep Link
+
+Handle DevSee connect URLs in your app delegate/scene delegate:
+
+```swift
+if DevSeeLoggerCenter.handleURL(url) {
+    return true
+}
+```
+
+After a successful connection deep link, the SDK remembers the last server host/port and restores it automatically on next app launch.
+
 ## Manual Logging
 
 ```swift
