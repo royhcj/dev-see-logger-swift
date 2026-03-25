@@ -1,6 +1,6 @@
 # DevSeeLogger
 
-Swift package for sending request/response logs to a dev-see log server.
+Swift package for sending request/response logs and text logs to a dev-see log server.
 
 ## Installation
 
@@ -95,6 +95,17 @@ await logger.logCompleted(
 ```
 
 You can also call `markRequestStarted(_:)` and later `logCompleted(...)` without managing a token.
+
+## Text Log
+
+```swift
+await logger.logText(
+    "Background sync completed",
+    tags: ["sync", "background"]
+)
+
+await logger.logText("Simple message without tags")
+```
 
 ## Request Body Behavior
 

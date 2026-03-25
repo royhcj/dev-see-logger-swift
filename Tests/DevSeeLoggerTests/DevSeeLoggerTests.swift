@@ -6,14 +6,23 @@ import FoundationNetworking
 @testable import DevSeeLogger
 
 private actor TransportSpy: LogTransporting {
-    private(set) var events: [ApiLogEvent] = []
+    private(set) var apiEvents: [ApiLogEvent] = []
+    private(set) var textEvents: [TextLogEvent] = []
 
     func send(event: ApiLogEvent) async throws {
-        events.append(event)
+        apiEvents.append(event)
+    }
+
+    func send(event: TextLogEvent) async throws {
+        textEvents.append(event)
     }
 
     func latestEvent() -> ApiLogEvent? {
-        events.last
+        apiEvents.last
+    }
+
+    func latestTextEvent() -> TextLogEvent? {
+        textEvents.last
     }
 }
 
@@ -410,6 +419,37 @@ final class DevSeeLoggerTests: XCTestCase {
 
         let event = await transportSpy.latestEvent()
         XCTAssertEqual(event?.duration, 123)
+    }
+
+    func testLogTextSendsTaggedTextLogEvent() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        await logger.logText(
+            "Background sync completed",
+            tags: ["sync", "background"]
+        )
+
+        let event = await transportSpy.latestTextEvent()
+        XCTAssertNotNil(event)
+        XCTAssertEqual(event?.type, "text-log")
+        XCTAssertEqual(event?.text, "Background sync completed")
+        XCTAssertEqual(event?.tags ?? [], ["sync", "background"])
+    }
+
+    func testLogTextSendsTextLogEventWithoutTagsWhenOmitted() async throws {
+        let configuration = sampleConfiguration()
+        let transportSpy = TransportSpy()
+        let logger = DevSeeLogger(configuration: configuration, transport: transportSpy)
+
+        await logger.logText("Plain text message")
+
+        let event = await transportSpy.latestTextEvent()
+        XCTAssertNotNil(event)
+        XCTAssertEqual(event?.type, "text-log")
+        XCTAssertEqual(event?.text, "Plain text message")
+        XCTAssertNil(event?.tags)
     }
 
     func testTransportBuildsPostRequestWithDefaultPathAndJSONBody() throws {

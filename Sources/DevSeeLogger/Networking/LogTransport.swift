@@ -5,6 +5,7 @@ import FoundationNetworking
 
 protocol LogTransporting: Sendable {
     func send(event: ApiLogEvent) async throws
+    func send(event: TextLogEvent) async throws
 }
 
 public final class LogTransport: LogTransporting {
@@ -28,7 +29,12 @@ public final class LogTransport: LogTransporting {
         _ = try await session.data(for: request)
     }
 
-    func makeRequest(for event: ApiLogEvent) throws -> URLRequest {
+    public func send(event: TextLogEvent) async throws {
+        let request = try makeRequest(for: event)
+        _ = try await session.data(for: request)
+    }
+
+    func makeRequest<T: Encodable>(for event: T) throws -> URLRequest {
         var request = URLRequest(url: configuration.resolvedLogsURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

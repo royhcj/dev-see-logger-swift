@@ -107,6 +107,24 @@ public final class DevSeeLogger: @unchecked Sendable {
         sendDetached(eventWithTransport.event, with: eventWithTransport.transport)
     }
 
+    public func logText(
+        _ text: String,
+        tags: [String]? = nil
+    ) async {
+        let (_, transport) = readState()
+        let event = TextLogEvent(text: text, tags: tags)
+        await send(event, with: transport)
+    }
+
+    public func logTextDetached(
+        _ text: String,
+        tags: [String]? = nil
+    ) {
+        let (_, transport) = readState()
+        let event = TextLogEvent(text: text, tags: tags)
+        sendDetached(event, with: transport)
+    }
+
     @discardableResult
     public func beginRequest(
         _ request: URLRequest,
@@ -296,6 +314,22 @@ public final class DevSeeLogger: @unchecked Sendable {
     }
 
     private func sendDetached(_ event: ApiLogEvent, with transport: any LogTransporting) {
+        _Concurrency.Task {
+            await send(event, with: transport)
+        }
+    }
+
+    private func send(_ event: TextLogEvent, with transport: any LogTransporting) async {
+        do {
+            try await transport.send(event: event)
+        } catch {
+            #if DEBUG
+            print("DevSeeLogger send failed: \(error)")
+            #endif
+        }
+    }
+
+    private func sendDetached(_ event: TextLogEvent, with transport: any LogTransporting) {
         _Concurrency.Task {
             await send(event, with: transport)
         }
